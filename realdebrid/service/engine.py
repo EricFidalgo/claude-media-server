@@ -320,8 +320,15 @@ class Engine:
 
     # ---- Real-Debrid API ---------------------------------------------------------------
 
+    def _key_file(self):
+        return self.state_path.parent / "token"
+
     def token(self):
-        t = self._token or os.environ.get("REALDEBRID_API_TOKEN")
+        try:
+            saved = self._key_file().read_text().strip()  # a key typed into the page wins over the one in the secrets file
+        except OSError:
+            saved = None
+        t = saved or self._token or os.environ.get("REALDEBRID_API_TOKEN")
         for f in TOKEN_FILES if not t else []:
             try:
                 t = f.read_text().strip()
@@ -329,8 +336,22 @@ class Engine:
                 pass
         return t or None
 
-    def _call(self, method, path, form=None, raw=None):
-        tok = self.token()
+    def set_token(self, key):
+        """Checks the key against Real-Debrid first, so a typo never replaces a working one."""
+        key = (key or "").strip()
+        if not key or len(key) > 200 or not key.isascii() or not key.isprintable() or " " in key:
+            raise RDError("That doesn't look like a Real-Debrid key.")
+        self._call("GET", "/user", tok=key)
+        path = self._key_file()
+        tmp = path.with_name(path.name + ".new")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(key)
+        os.replace(tmp, path)
+        self._cache.clear()
+
+    def _call(self, method, path, form=None, raw=None, tok=None):
+        tok = tok or self.token()
         if not tok:
             raise RDError("Real-Debrid isn't connected: no token.")
         data = raw if raw is not None else urllib.parse.urlencode(form).encode() if form is not None else None

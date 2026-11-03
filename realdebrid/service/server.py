@@ -39,6 +39,7 @@ def _routes(rd):
         ("GET", r"/links", lambda m, b: rd.links()),
         ("GET", r"/links/([^/]+)", lambda m, b: rd.link_info(m[1])),
         ("GET", r"/hosts", lambda m, b: rd.hosts()),
+        ("POST", r"/token", lambda m, b: rd.set_token(json_field(b, "key")) or {"ok": True}),
         ("POST", r"/add", lambda m, b: rd.add(json_field(b, "link") or "")),
         ("POST", r"/torrents/([^/]+)/select", lambda m, b: rd.select(m[1], json_field(b, "files") or [])),
         ("POST", r"/torrents/([^/]+)/save", lambda m, b: rd.save(m[1], json_field(b, "picks"))),

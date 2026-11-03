@@ -43,6 +43,13 @@ class ApiTest(ServerCase):
         self.assertEqual(self.call("GET", "/health"), (200, {"ok": True}))
         self.assertEqual(self.fake.calls, [])
 
+    def test_the_key_can_be_set_and_is_never_sent_back(self):
+        status, body = self.call("POST", "/token", {"key": "my-own-key"})
+        self.assertEqual(status, 200)
+        self.assertNotIn("my-own-key", json.dumps(body))
+        self.assertNotIn("my-own-key", json.dumps(self.call("GET", "/overview")[1]))
+        self.assertEqual(self.call("POST", "/token", {"key": ""})[0], 400)
+
     def test_reads(self):
         self.fake.torrents["M"] = torrent("M", files=[("/Buddy.2026.mkv", 3000, 1)])
         self.assertEqual(self.call("GET", "/overview")[1]["account"]["username"], "tester")

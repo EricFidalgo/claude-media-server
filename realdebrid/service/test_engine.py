@@ -179,12 +179,41 @@ class AccountTest(EngineCase):
             with self.assertRaises(RDError):
                 rd.torrents()
 
+    def test_saving_a_key_connects_and_is_used_for_later_calls(self):
+        seen = []
+        def opener(req, timeout=None):
+            seen.append(req.get_header("Authorization"))
+            return self.fake(req, timeout)
+        with mock.patch.dict("os.environ", clear=True), mock.patch.object(engine, "TOKEN_FILES", []):
+            rd = Engine({"movie": self.tmp}, self.tmp / "s.json", opener=opener)
+            self.assertFalse(rd.overview()["configured"])
+            rd.set_token("  my-own-key \n")
+            self.assertTrue(rd.overview()["configured"])
+            self.assertEqual(set(seen), {"Bearer my-own-key"})
+            # a restart finds the saved key
+            again = Engine({"movie": self.tmp}, self.tmp / "s.json", opener=opener)
+            self.assertTrue(again.overview()["configured"])
+
     def test_bad_token(self):
         def opener(req, timeout=None):
             raise http_error(req.full_url, 401, {"error": "bad_token", "error_code": 8})
         rd = make(self.tmp, opener)
         with self.assertRaisesRegex(RDError, "rejected"):
             rd.torrents()
+
+    def test_a_rejected_key_changes_nothing(self):
+        def opener(req, timeout=None):
+            if req.get_header("Authorization") == "Bearer typo":
+                raise http_error(req.full_url, 401, {"error": "bad_token", "error_code": 8})
+            return self.fake(req, timeout)
+        rd = make(self.tmp, opener)
+        with self.assertRaisesRegex(RDError, "rejected"):
+            rd.set_token("typo")
+        self.assertTrue(rd.overview()["configured"])
+        self.assertEqual(rd.overview()["account"]["username"], "tester")
+        self.assertFalse((self.tmp / "token").exists())
+        with self.assertRaises(RDError):
+            rd.set_token("two words")
 
     def test_network_failure_is_a_readable_error(self):
         def opener(req, timeout=None):

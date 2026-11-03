@@ -22,6 +22,13 @@ button.armed { background:var(--bad); color:#fff; font-weight:600; }
 .top > *, main > * { max-width:688px; margin-left:auto; margin-right:auto; }
 .back { display:flex; align-items:center; min-height:44px; width:100%; text-decoration:none; font-size:16px; }
 input[type=search] { display:block; width:100%; min-height:44px; font-size:16px; color:var(--text); background:var(--card2); border:1px solid var(--line); border-radius:10px; padding:0 12px; -webkit-appearance:none; appearance:none; }
+input[type=password] { display:block; width:100%; min-height:44px; font-size:16px; color:var(--text); background:var(--card2); border:1px solid var(--line); border-radius:10px; padding:0 12px; margin:8px 0; -webkit-appearance:none; appearance:none; }
+input[type=password]:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+.keybox { margin-top:24px; background:var(--card); border-radius:12px; padding:0 12px; }
+.keybox summary { min-height:44px; display:flex; align-items:center; cursor:pointer; color:var(--dim); }
+.keybox[open] { padding-bottom:12px; }
+.keybox button { width:100%; }
+.keybox p { margin:4px 0; color:var(--dim); font-size:13px; }
 input[type=search]:focus { outline:2px solid var(--accent); outline-offset:-1px; }
 main { padding:0 max(16px, env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
 .error { background:#3a1a18; color:#ffb4ae; padding:10px 12px; border-radius:10px; margin-bottom:10px; overflow-wrap:anywhere; }
@@ -66,12 +73,18 @@ main { padding:0 max(16px, env(safe-area-inset-right)) calc(40px + env(safe-area
     <div id="jobs"></div>
     <div id="list"><p class="empty">Loading…</p></div>
     <button id="more" class="moreBtn" type="button" hidden>Show more</button>
+    <details id="keybox" class="keybox">
+        <summary>Real-Debrid key</summary>
+        <p>Paste your own key from real-debrid.com/apitoken. It's checked first, then saved on the server, and replaces the old one.</p>
+        <input id="key" type="password" aria-label="Real-Debrid key" placeholder="Your Real-Debrid key" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        <button id="saveKey" class="primary" type="button">Save key</button>
+    </details>
 </main>
 <script>
 (function () {
     'use strict';
     var CHUNK = 50, POLL = 4000, LIST_EVERY = 60000;
-    var box = { search: byId('search'), error: byId('error'), jobs: byId('jobs'), list: byId('list'), more: byId('more') };
+    var box = { search: byId('search'), error: byId('error'), jobs: byId('jobs'), list: byId('list'), more: byId('more'), keybox: byId('keybox'), key: byId('key'), saveKey: byId('saveKey') };
     var s = { torrents: null, queue: [], query: '', showing: CHUNK, busy: {}, armed: {}, shut: false };
     var doneCount = null, listAt = 0, listDrawn = null, jobsDrawn = null, polling = false, timer = null;
 
@@ -167,6 +180,7 @@ main { padding:0 max(16px, env(safe-area-inset-right)) calc(40px + env(safe-area
         if (shutOut(err)) { return; }
         box.error.textContent = err.message;
         box.error.hidden = false;
+        if (/token|key/i.test(err.message)) { box.keybox.open = true; } // no key, or Real-Debrid turned it down
     }
 
     function jobsOf(id) {
@@ -376,6 +390,19 @@ main { padding:0 max(16px, env(safe-area-inset-right)) calc(40px + env(safe-area
     box.more.addEventListener('click', function () {
         s.showing += CHUNK;
         drawList();
+    });
+    box.saveKey.addEventListener('click', function () {
+        var key = box.key.value.trim();
+        if (!key) { return; }
+        box.saveKey.disabled = true;
+        api('POST', 'token', { key: key }).then(function () {
+            box.key.value = '';
+            box.keybox.open = false;
+            box.error.hidden = true;
+            s.torrents = null;
+            toast('Key saved.');
+            return refresh(true);
+        }).then(null, function (err) { toast(err.message, true); }).then(function () { box.saveKey.disabled = false; });
     });
     document.addEventListener('visibilitychange', poll);
     window.addEventListener('pageshow', poll);
