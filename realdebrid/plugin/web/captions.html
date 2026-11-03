@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#101010">
+<title>Captions</title>
+<style>
+:root { --bg:#101010; --card:#1c1c1c; --card2:#262626; --line:#333; --text:#f2f2f2; --dim:#a5a5a5; --accent:#00a4dc; --bad:#e5534b; }
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
+html { -webkit-text-size-adjust:100%; }
+body { margin:0; background:var(--bg); color:var(--text); font:15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+a { color:var(--accent); }
+button, .fileBtn { font:inherit; color:inherit; border:0; border-radius:10px; background:var(--card2); padding:0 14px; min-height:44px; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+button:disabled { opacity:.45; cursor:default; }
+button.danger { background:var(--card2); color:var(--bad); font-weight:600; }
+button.armed { background:var(--bad); color:#fff; font-weight:600; }
+.top { position:sticky; top:0; z-index:10; background:var(--bg); padding:calc(6px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 10px max(16px, env(safe-area-inset-left)); }
+.top > *, main > * { max-width:688px; margin-left:auto; margin-right:auto; }
+.back { display:flex; align-items:center; min-height:44px; width:100%; text-decoration:none; font-size:16px; }
+input[type=search], select { display:block; width:100%; min-height:44px; font:inherit; font-size:16px; color:var(--text); background:var(--card2); border:1px solid var(--line); border-radius:10px; padding:0 12px; }
+input[type=search] { -webkit-appearance:none; appearance:none; }
+input[type=search]:focus, select:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+main { padding:0 max(16px, env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+h1 { font-size:20px; font-weight:600; margin:2px 0; overflow-wrap:anywhere; }
+h2 { font-size:15px; font-weight:600; color:var(--dim); margin:22px 0 8px; }
+.error { background:#3a1a18; color:#ffb4ae; padding:10px 12px; border-radius:10px; margin-bottom:10px; overflow-wrap:anywhere; }
+.row { display:flex; align-items:center; gap:12px; width:100%; text-align:left; background:var(--card); border-radius:12px; padding:10px 12px; margin-bottom:8px; min-height:60px; }
+.row input { width:24px; height:24px; flex:none; margin:0; accent-color:var(--bad); }
+.words { flex:1; min-width:0; }
+.name { font-weight:500; overflow-wrap:anywhere; }
+.desc { color:var(--dim); font-size:13px; margin-top:2px; overflow-wrap:anywhere; }
+.note { color:var(--dim); font-size:13px; margin:8px 0 0; }
+.wide { display:block; width:100%; }
+.working { background:var(--card); border-radius:12px; padding:12px; margin-bottom:8px; }
+.fileBtn { display:flex; align-items:center; justify-content:center; background:var(--accent); color:#fff; font-weight:600; margin-top:8px; }
+.fileBtn input { position:absolute; opacity:0; width:1px; height:1px; }
+.fileBtn.busy { opacity:.45; cursor:default; }
+.empty { color:var(--dim); text-align:center; padding:28px 12px; }
+.toast { position:fixed; left:16px; right:16px; bottom:calc(20px + env(safe-area-inset-bottom)); z-index:30; background:#2b2b2b; color:#fff; padding:12px 14px; border-radius:12px; text-align:center; box-shadow:0 6px 24px rgba(0,0,0,.5); overflow-wrap:anywhere; }
+.toast.bad { background:#7a2520; }
+</style>
+</head>
+<body>
+<div class="top">
+    <a id="back" class="back" href="../web/#/home">‹ Jellyfin</a>
+    <input id="search" type="search" aria-label="Search your videos" placeholder="Search your videos" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+</div>
+<main>
+    <div id="error" class="error" role="alert" hidden></div>
+    <div id="view"><p class="empty">Loading…</p></div>
+</main>
+<script>
+(function () {
+    'use strict';
+    var CHUNK = 50, POLL = 3000, MAX_FILE = 6 * 1024 * 1024;
+    var CAN_ADD = ['srt', 'vtt', 'ass', 'ssa'];
+    var box = { back: byId('back'), search: byId('search'), error: byId('error'), view: byId('view') };
+    var s = { videos: null, query: '', showing: CHUNK, video: null, ticked: {}, armed: false, job: null, adding: false, language: 'en', shut: false };
+    var timer = null, disarm = null;
+
+    function byId(id) { return document.getElementById(id); }
+
+    // Everything on this page is built with h(), so names from files can only ever land as text.
+    function h(tag, props) {
+        var e = document.createElement(tag);
+        Object.keys(props || {}).forEach(function (k) {
+            var v = props[k];
+            if (v === undefined || v === null || v === false) { return; }
+            if (k === 'class') { e.className = v; }
+            else if (k.indexOf('on') === 0) { e.addEventListener(k.slice(2), v); }
+            else if (k === 'checked' || k === 'disabled' || k === 'selected') { e[k] = v; }
+            else { e.setAttribute(k, v === true ? '' : v); }
+        });
+        for (var i = 2; i < arguments.length; i++) { add(e, arguments[i]); }
+        return e;
+    }
+    function add(e, kid) {
+        if (Array.isArray(kid)) { kid.forEach(function (k) { add(e, k); }); }
+        else if (kid !== null && kid !== undefined && kid !== false) { e.append(kid); }
+    }
+    function fill(e) {
+        e.replaceChildren();
+        for (var i = 1; i < arguments.length; i++) { add(e, arguments[i]); }
+    }
+
+    // This page lives outside Jellyfin's own app, so it reads the login Jellyfin keeps in this browser.
+    function here(server) {
+        return [server.ManualAddress, server.LocalAddress, server.RemoteAddress].some(function (a) {
+            try { return a && new URL(a).origin === location.origin; } catch (e) { return false; }
+        }) ? 1 : 0;
+    }
+    function token() {
+        var servers = [];
+        try { servers = JSON.parse(localStorage.getItem('jellyfin_credentials')).Servers || []; } catch (e) { /* not logged in */ }
+        var mine = servers.filter(function (x) { return x.AccessToken; }).sort(function (a, b) {
+            return here(b) - here(a) || (b.DateLastAccessed || 0) - (a.DateLastAccessed || 0);
+        });
+        return mine.length ? mine[0].AccessToken : null;
+    }
+
+    function api(method, path, body) {
+        var login = token();
+        if (!login) {
+            var none = new Error('Log in first.');
+            none.status = 401;
+            return Promise.reject(none);
+        }
+        var opts = { method: method, headers: { Authorization: 'MediaBrowser Token="' + login + '"' } };
+        if (method === 'GET' && window.AbortSignal && AbortSignal.timeout) { opts.signal = AbortSignal.timeout(30000); } // a phone waking up can leave a request hanging, which would stop the polling
+        if (body instanceof File) { opts.body = body; }
+        else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
+        return fetch('api/' + path, opts).then(function (res) {
+            return res.json().catch(function () { return null; }).then(function (data) {
+                if (!res.ok) {
+                    var err = new Error((data && data.error) || 'Something went wrong (' + res.status + ').');
+                    err.status = res.status;
+                    throw err;
+                }
+                return data;
+            });
+        }, function () { throw new Error("Can't reach the server."); });
+    }
+
+    function toast(text, bad) {
+        document.querySelectorAll('.toast').forEach(function (t) { t.remove(); });
+        var t = h('div', { class: 'toast' + (bad ? ' bad' : ''), role: 'status' }, text);
+        document.body.append(t);
+        setTimeout(function () { t.remove(); }, bad ? 6000 : 4000);
+    }
+    function plain(text) {
+        return String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[._]+/g, ' ');
+    }
+
+    // The page gives way completely when this login can't use it.
+    function shutOut(err) {
+        if (err.status !== 401 && err.status !== 403) { return false; }
+        s.shut = true;
+        clearTimeout(timer);
+        box.search.hidden = true;
+        box.error.hidden = true;
+        fill(box.view, err.status === 403
+            ? h('p', { class: 'empty' }, 'Captions is for admins only.')
+            : h('p', { class: 'empty' }, h('a', { href: '../web/' }, 'Log in to Jellyfin first')));
+        return true;
+    }
+    function showError(err) {
+        if (shutOut(err)) { return; }
+        box.error.textContent = err.message;
+        box.error.hidden = false;
+    }
+    function clearError() { box.error.hidden = true; }
+
+    // ---- the list of videos ----
+
+    function found() {
+        var words = plain(s.query).split(/\s+/).filter(Boolean);
+        return s.videos.filter(function (v) {
+            var hay = plain(v.name + ' ' + v.where);
+            return words.every(function (w) { return hay.indexOf(w) >= 0; });
+        });
+    }
+    function drawList() {
+        if (s.shut || !s.videos) { return; }
+        var matches = found(), shown = matches.slice(0, s.showing);
+        box.back.textContent = '‹ Jellyfin';
+        box.back.href = '../web/#/home';
+        box.search.hidden = false;
+        box.search.placeholder = 'Search ' + s.videos.length + ' video' + (s.videos.length === 1 ? '' : 's');
+        fill(box.view, 
+            h('div', null, shown.length ? shown.map(function (v) {
+                return h('button', { class: 'row', type: 'button', 'data-video': v.id, onclick: function () { location.hash = v.id; } },
+                    h('div', { class: 'words' }, h('div', { class: 'name' }, v.name), h('div', { class: 'desc' }, v.where)));
+            }) : h('p', { class: 'empty' }, s.query ? 'Nothing matches' : 'No videos yet')),
+            matches.length > shown.length ? h('button', { class: 'wide', type: 'button', onclick: function () { s.showing += CHUNK; drawList(); } }, 'Show more') : null);
+    }
+    function openList() {
+        clearTimeout(timer);
+        s.video = null;
+        clearError();
+        api('GET', 'videos').then(function (videos) {
+            s.videos = videos;
+            if (!location.hash.slice(1)) { drawList(); }
+        }, showError);
+    }
+
+    // ---- one video ----
+
+    function tickedIds() { return Object.keys(s.ticked).filter(function (id) { return s.ticked[id]; }); }
+    function drawVideo() {
+        if (s.shut || !s.video) { return; }
+        var v = s.video, busy = !!s.job, count = tickedIds().length;
+        box.back.textContent = '‹ All videos';
+        box.back.href = '#';
+        box.search.hidden = true;
+        var removeWord = 'Remove ' + count + ' caption' + (count === 1 ? '' : 's');
+        var languages = Object.keys(v.languages).map(function (code) {
+            return h('option', { value: code, selected: code === s.language }, v.languages[code]);
+        });
+        fill(box.view, 
+            h('h1', null, v.name),
+            h('div', { class: 'desc' }, v.where),
+            h('h2', null, 'Captions on this video'),
+            busy ? h('div', { class: 'working', role: 'status' },
+                h('div', { class: 'name' }, 'Removing captions…'),
+                h('div', { class: 'desc' }, "A big movie can take a few minutes. It's safe to leave this page.")) : null,
+            v.captions.length ? v.captions.map(function (c) {
+                return h('label', { class: 'row', 'data-caption': c.id },
+                    h('input', { type: 'checkbox', checked: !!s.ticked[c.id], disabled: busy, onchange: function (e) {
+                        s.ticked[c.id] = e.target.checked;
+                        clearTimeout(disarm);
+                        s.armed = false;
+                        drawVideo();
+                    } }),
+                    h('div', { class: 'words' }, h('div', { class: 'name' }, c.name), h('div', { class: 'desc' }, c.detail)));
+            }) : h('p', { class: 'empty' }, 'No captions on this video'),
+            v.captions.length ? h('button', { class: 'wide ' + (s.armed ? 'armed' : 'danger'), type: 'button', disabled: busy || !count, onclick: remove },
+                s.armed ? 'Tap again to remove for good' : count ? removeWord : 'Tick the captions to remove') : null,
+            v.captions.length ? h('p', { class: 'note' }, "Removing is permanent. If someone is watching this video right now, they may need to start it again.") : null,
+            h('h2', null, 'Add a caption'),
+            h('select', { 'aria-label': 'Language of the new caption', disabled: busy || s.adding, onchange: function (e) { s.language = e.target.value; } }, languages),
+            h('label', { class: 'fileBtn' + (busy || s.adding ? ' busy' : '') }, s.adding ? 'Adding…' : 'Choose caption file',
+                h('input', { type: 'file', disabled: busy || s.adding, onchange: function (e) { upload(e.target.files[0]); } })),
+            h('p', { class: 'note' }, 'A .srt, .vtt, .ass or .ssa file.'));
+    }
+    function stillOn(id) { return location.hash.slice(1) === id; }
+    function unfinished(job) { return job.status === 'waiting' || job.status === 'working'; }
+    function loadVideo(id) {
+        return api('GET', 'videos/' + encodeURIComponent(id)).then(function (video) {
+            if (!stillOn(id)) { return; }
+            s.video = video;
+            var known = {};
+            video.captions.forEach(function (c) { known[c.id] = s.ticked[c.id]; });
+            s.ticked = known;
+            clearError();
+            drawVideo();
+        });
+    }
+    function openVideo(id) {
+        clearTimeout(timer);
+        clearError();
+        s.video = null;
+        s.ticked = {};
+        s.armed = false;
+        s.job = null;
+        box.search.hidden = true;
+        fill(box.view, h('p', { class: 'empty' }, 'Loading…'));
+        Promise.all([loadVideo(id), api('GET', 'jobs')]).then(function (both) {
+            if (!stillOn(id)) { return; }
+            var mine = both[1].filter(function (j) { return j.video === id; });
+            var last = mine[mine.length - 1];
+            s.job = mine.filter(unfinished)[0] || null;
+            drawVideo();
+            if (s.job) { watchJob(); }
+            else if (last && last.status === 'failed') { showError(new Error('The last removal didn\u2019t work. ' + last.error)); }
+        }).catch(showError);
+    }
+    function remove() {
+        if (!s.armed) {
+            s.armed = true;
+            drawVideo();
+            clearTimeout(disarm);
+            disarm = setTimeout(function () { s.armed = false; drawVideo(); }, 4000);
+            return;
+        }
+        clearTimeout(disarm);
+        s.armed = false;
+        var id = s.video.id, sending = {};
+        s.job = sending; // shows as working straight away, so a third tap can't ask again
+        drawVideo();
+        api('POST', 'videos/' + encodeURIComponent(id) + '/remove', { captions: tickedIds() }).then(function (job) {
+            if (s.job !== sending) { return; }
+            s.job = job;
+            s.ticked = {};
+            drawVideo();
+            watchJob();
+        }, function (err) {
+            if (s.job !== sending) { return; }
+            s.job = null;
+            drawVideo();
+            showError(err);
+        });
+    }
+    function watchJob() {
+        clearTimeout(timer);
+        if (s.shut) { return; }
+        timer = setTimeout(function () {
+            var id = s.video && s.video.id, watching = s.job;
+            if (!watching || !id) { return; }
+            api('GET', 'jobs').then(function (jobs) {
+                if (s.job !== watching) { return null; }
+                var job = jobs.filter(function (j) { return j.id === watching.id; })[0];
+                if (job && unfinished(job)) { clearError(); watchJob(); return null; }
+                s.job = null; // the service forgets its jobs if it restarts, and then nothing more will ever come
+                return loadVideo(id).then(function () {
+                    if (!job) { showError(new Error('That was interrupted. Check the list and try again.')); }
+                    else if (job.status === 'done') { toast('Removed. Jellyfin will catch up in a minute.'); }
+                    else { showError(new Error(job.error)); }
+                });
+            }).catch(function (err) {
+                showError(err);
+                if (s.job) { watchJob(); } else { drawVideo(); }
+            });
+        }, POLL);
+    }
+    function upload(file) {
+        if (!file) { return; }
+        var type = file.name.split('.').pop().toLowerCase();
+        if (CAN_ADD.indexOf(type) < 0) {
+            toast('Pick a .srt, .vtt, .ass or .ssa file.', true);
+            drawVideo();
+            return;
+        }
+        if (file.size > MAX_FILE) {
+            toast('That file is too big to be a caption file.', true);
+            drawVideo();
+            return;
+        }
+        s.adding = true;
+        drawVideo();
+        var id = s.video.id;
+        api('POST', 'videos/' + encodeURIComponent(id) + '/add/' + s.language + '/' + type, file).then(function () {
+            return loadVideo(id).then(function () { toast('Added. Jellyfin will catch up in a minute.'); });
+        }).catch(function (err) { toast(err.message, true); }).then(function () {
+            s.adding = false;
+            drawVideo();
+        });
+    }
+
+    function route() {
+        if (s.shut) { return; }
+        var id = location.hash.slice(1);
+        if (id) { openVideo(id); } else { openList(); }
+    }
+    box.search.addEventListener('input', function () {
+        s.query = box.search.value;
+        s.showing = CHUNK;
+        drawList();
+    });
+    window.addEventListener('hashchange', route);
+    route();
+})();
+</script>
+</body>
+</html>

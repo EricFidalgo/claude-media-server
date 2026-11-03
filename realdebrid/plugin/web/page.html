@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#101010">
+<title>Real-Debrid</title>
+<style>
+:root { --bg:#101010; --card:#1c1c1c; --card2:#262626; --line:#333; --text:#f2f2f2; --dim:#a5a5a5; --accent:#00a4dc; --good:#52b54b; --warn:#e8a33d; --bad:#e5534b; }
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
+html { -webkit-text-size-adjust:100%; }
+body { margin:0; background:var(--bg); color:var(--text); font:15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+a { color:var(--accent); }
+button { font:inherit; color:inherit; border:0; border-radius:10px; background:var(--card2); padding:0 14px; min-height:44px; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+button:disabled { opacity:.45; cursor:default; }
+button.primary { background:var(--accent); color:#fff; font-weight:600; }
+button.danger { color:var(--bad); }
+button.armed { background:var(--bad); color:#fff; font-weight:600; }
+.top { position:sticky; top:0; z-index:10; background:var(--bg); padding:calc(6px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 10px max(16px, env(safe-area-inset-left)); }
+.top > *, main > * { max-width:688px; margin-left:auto; margin-right:auto; }
+.back { display:flex; align-items:center; min-height:44px; width:100%; text-decoration:none; font-size:16px; }
+input[type=search] { display:block; width:100%; min-height:44px; font-size:16px; color:var(--text); background:var(--card2); border:1px solid var(--line); border-radius:10px; padding:0 12px; -webkit-appearance:none; appearance:none; }
+input[type=search]:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+main { padding:0 max(16px, env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+.error { background:#3a1a18; color:#ffb4ae; padding:10px 12px; border-radius:10px; margin-bottom:10px; overflow-wrap:anywhere; }
+.row { display:flex; align-items:center; gap:12px; background:var(--card); border-radius:12px; padding:10px 12px; margin-bottom:8px; min-height:64px; }
+.words { flex:1; min-width:0; }
+.name { font-weight:500; overflow-wrap:anywhere; }
+.desc { color:var(--dim); font-size:13px; margin-top:2px; overflow-wrap:anywhere; }
+.row > button, .state { flex:none; white-space:nowrap; }
+.state { font-size:13px; font-weight:600; color:var(--dim); }
+.state.good { color:var(--good); }
+.state.busy { color:var(--accent); }
+.state.bad { color:var(--bad); }
+.job { background:var(--card); border-radius:12px; padding:12px; margin-bottom:8px; }
+.job .desc.bad { color:var(--bad); }
+.bar { height:4px; background:var(--card2); border-radius:2px; margin-top:8px; overflow:hidden; }
+.bar i { display:block; height:100%; background:var(--accent); }
+.actions { display:flex; gap:8px; margin-top:10px; }
+.actions button { flex:1; }
+.moreBtn { display:block; width:100%; margin-top:4px; }
+.empty { color:var(--dim); text-align:center; padding:28px 12px; }
+.sheet { position:fixed; inset:0; z-index:20; background:var(--bg); display:flex; flex-direction:column; }
+.sheetHead { display:flex; gap:8px; align-items:flex-start; padding:calc(10px + env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 10px max(16px, env(safe-area-inset-left)); border-bottom:1px solid var(--line); }
+.sheetHead h2 { flex:1; min-width:0; font-size:16px; font-weight:600; margin:0; padding-top:11px; overflow-wrap:anywhere; }
+.sheetBody { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:12px max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left)); }
+.sheetBody > * { max-width:688px; margin-left:auto; margin-right:auto; }
+.pick { display:flex; align-items:center; gap:12px; background:var(--card); border-radius:12px; padding:10px 12px; margin-bottom:8px; min-height:60px; }
+.pick input { width:24px; height:24px; flex:none; margin:0; accent-color:var(--accent); }
+.pick.off { opacity:.6; }
+.sheetFoot { display:flex; gap:8px; padding:10px max(16px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); border-top:1px solid var(--line); }
+.sheetFoot button { flex:1; }
+.toast { position:fixed; left:16px; right:16px; bottom:calc(20px + env(safe-area-inset-bottom)); z-index:30; background:#2b2b2b; color:#fff; padding:12px 14px; border-radius:12px; text-align:center; box-shadow:0 6px 24px rgba(0,0,0,.5); overflow-wrap:anywhere; }
+.toast.bad { background:#7a2520; }
+</style>
+</head>
+<body>
+<div class="top">
+    <a class="back" href="../web/#/home">‹ Jellyfin</a>
+    <input id="search" type="search" aria-label="Search your Real-Debrid videos" placeholder="Search your videos" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+</div>
+<main>
+    <div id="error" class="error" role="alert" hidden></div>
+    <div id="jobs"></div>
+    <div id="list"><p class="empty">Loading…</p></div>
+    <button id="more" class="moreBtn" type="button" hidden>Show more</button>
+</main>
+<script>
+(function () {
+    'use strict';
+    var CHUNK = 50, POLL = 4000, LIST_EVERY = 60000;
+    var box = { search: byId('search'), error: byId('error'), jobs: byId('jobs'), list: byId('list'), more: byId('more') };
+    var s = { torrents: null, queue: [], query: '', showing: CHUNK, busy: {}, armed: {}, shut: false };
+    var doneCount = null, listAt = 0, listDrawn = null, jobsDrawn = null, polling = false, timer = null;
+
+    function byId(id) { return document.getElementById(id); }
+
+    // Everything on this page is built with h(), so names from torrents can only ever land as text.
+    function h(tag, props) {
+        var e = document.createElement(tag);
+        Object.keys(props || {}).forEach(function (k) {
+            var v = props[k];
+            if (v === undefined || v === null || v === false) { return; }
+            if (k === 'class') { e.className = v; }
+            else if (k.indexOf('on') === 0) { e.addEventListener(k.slice(2), v); }
+            else if (k === 'checked' || k === 'disabled') { e[k] = v; }
+            else { e.setAttribute(k, v === true ? '' : v); }
+        });
+        for (var i = 2; i < arguments.length; i++) { add(e, arguments[i]); }
+        return e;
+    }
+    function add(e, kid) {
+        if (Array.isArray(kid)) { kid.forEach(function (k) { add(e, k); }); }
+        else if (kid !== null && kid !== undefined && kid !== false) { e.append(kid); }
+    }
+
+    // This page lives outside Jellyfin's own app, so it reads the login Jellyfin keeps in this browser.
+    function here(server) {
+        return [server.ManualAddress, server.LocalAddress, server.RemoteAddress].some(function (a) {
+            try { return a && new URL(a).origin === location.origin; } catch (e) { return false; }
+        }) ? 1 : 0;
+    }
+    function token() {
+        var servers = [];
+        try { servers = JSON.parse(localStorage.getItem('jellyfin_credentials')).Servers || []; } catch (e) { /* not logged in */ }
+        var mine = servers.filter(function (x) { return x.AccessToken; }).sort(function (a, b) {
+            return here(b) - here(a) || (b.DateLastAccessed || 0) - (a.DateLastAccessed || 0);
+        });
+        return mine.length ? mine[0].AccessToken : null;
+    }
+
+    function api(method, path, body) {
+        var login = token();
+        if (!login) {
+            var none = new Error('Log in first.');
+            none.status = 401;
+            return Promise.reject(none);
+        }
+        var opts = { method: method, headers: { Authorization: 'MediaBrowser Token="' + login + '"' } };
+        if (method === 'GET' && window.AbortSignal && AbortSignal.timeout) { opts.signal = AbortSignal.timeout(30000); } // a phone waking up can leave a request hanging, which would stop the polling
+        if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
+        return fetch('api/' + path, opts).then(function (res) {
+            return res.json().catch(function () { return null; }).then(function (data) {
+                if (!res.ok) {
+                    var err = new Error((data && data.error) || 'Something went wrong (' + res.status + ').');
+                    err.status = res.status;
+                    throw err;
+                }
+                return data;
+            });
+        }, function () { throw new Error("Can't reach the server."); });
+    }
+
+    function size(n) {
+        var units = ['B', 'KB', 'MB', 'GB', 'TB'], i = 0;
+        n = n || 0;
+        while (n >= 1000 && i < units.length - 1) { n /= 1000; i++; }
+        return (n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)) + ' ' + units[i];
+    }
+    function toast(text, bad) {
+        document.querySelectorAll('.toast').forEach(function (t) { t.remove(); });
+        var t = h('div', { class: 'toast' + (bad ? ' bad' : ''), role: 'status' }, text);
+        document.body.append(t);
+        setTimeout(function () { t.remove(); }, bad ? 6000 : 3000);
+    }
+    function plain(text) {
+        return String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[._]+/g, ' ');
+    }
+
+    // The page gives way completely when this login can't use it.
+    function shutOut(err) {
+        if (err.status !== 401 && err.status !== 403) { return false; }
+        s.shut = true;
+        clearTimeout(timer);
+        box.search.hidden = true;
+        box.more.hidden = true;
+        box.error.hidden = true;
+        box.jobs.replaceChildren();
+        box.list.replaceChildren(err.status === 403
+            ? h('p', { class: 'empty' }, 'Real-Debrid is for admins only.')
+            : h('p', { class: 'empty' }, h('a', { href: '../web/' }, 'Log in to Jellyfin first')));
+        return true;
+    }
+    function showError(err) {
+        if (shutOut(err)) { return; }
+        box.error.textContent = err.message;
+        box.error.hidden = false;
+    }
+
+    function jobsOf(id) {
+        return s.queue.filter(function (j) { return j.torrent === id && j.status !== 'done'; });
+    }
+    // What a row can offer: a word of how it's going, or a button.
+    function rowState(t) {
+        var jobs = jobsOf(t.id);
+        if (jobs.some(function (j) { return j.status === 'failed'; })) { return { word: 'Failed', cls: 'bad' }; }
+        if (jobs.length) { return { word: 'Downloading', cls: 'busy' }; }
+        if (s.busy[t.id]) { return { word: 'Starting…', cls: 'busy' }; }
+        if (t.saved && !t.more) { return { word: 'On server', cls: 'good' }; }
+        return { action: t.saved ? t.more + ' more' : 'Download' };
+    }
+
+    function visible() {
+        var words = plain(s.query).split(/\s+/).filter(Boolean);
+        return (s.torrents || []).filter(function (t) {
+            if (t.status !== 'downloaded') { return false; }
+            var hay = plain(t.filename + ' ' + t.label.name + ' ' + t.label.description);
+            return words.every(function (w) { return hay.indexOf(w) >= 0; });
+        });
+    }
+
+    function drawList() {
+        if (s.shut || !s.torrents) { return; }
+        var found = visible(), shown = found.slice(0, s.showing);
+        var view = JSON.stringify([s.query, found.length, shown.map(function (t) { return [t.id, t.label, rowState(t)]; })]);
+        if (view === listDrawn) { return; }
+        listDrawn = view;
+        box.more.hidden = found.length <= shown.length;
+        box.list.replaceChildren.apply(box.list, shown.length ? shown.map(drawRow) : [h('p', { class: 'empty' }, s.query ? 'Nothing matches' : 'Nothing ready on Real-Debrid yet')]);
+    }
+    function drawRow(t) {
+        var state = rowState(t);
+        return h('div', { class: 'row', 'data-torrent': t.id },
+            h('div', { class: 'words' }, h('div', { class: 'name' }, t.label.name), h('div', { class: 'desc' }, t.label.description)),
+            state.action
+                ? h('button', { class: 'primary', type: 'button', onclick: function () { download(t); } }, state.action)
+                : h('span', { class: 'state ' + state.cls }, state.word));
+    }
+
+    // A button that needs a second tap, for anything that can't be undone.
+    function sure(key, label, action) {
+        var armed = s.armed[key];
+        return h('button', { class: armed ? 'armed' : 'danger', type: 'button', onclick: function () {
+            if (s.armed[key]) { delete s.armed[key]; action(); return; }
+            s.armed[key] = true;
+            drawJobs();
+            setTimeout(function () { delete s.armed[key]; drawJobs(); }, 4000);
+        } }, armed ? 'Tap again to confirm' : label);
+    }
+    function jobName(j) { return j.path.split('/').pop().replace(/\.[^.]+$/, ''); }
+    function drawJobs() {
+        if (s.shut) { return; }
+        var live = s.queue.filter(function (j) { return j.status !== 'done'; });
+        var view = JSON.stringify([live, Object.keys(s.armed)]);
+        if (view === jobsDrawn) { return; }
+        jobsDrawn = view;
+        box.jobs.replaceChildren.apply(box.jobs, live.map(drawJob));
+    }
+    function drawJob(j) {
+        var failed = j.status === 'failed', saving = j.status === 'saving';
+        var percent = j.total ? Math.min(100, Math.floor(j.done / j.total * 100)) : 0;
+        var words = failed ? 'Failed: ' + (j.error || 'the download stopped')
+            : saving ? 'Downloading ' + percent + '% · ' + size(j.done) + ' of ' + size(j.total) + (j.speed ? ' · ' + size(j.speed) + '/s' : '')
+            : 'Waiting';
+        return h('div', { class: 'job', 'data-job': j.id },
+            h('div', { class: 'name' }, jobName(j)),
+            h('div', { class: 'desc' + (failed ? ' bad' : '') }, words),
+            saving ? h('div', { class: 'bar' }, h('i', { style: 'width:' + percent + '%' })) : null,
+            h('div', { class: 'actions' },
+                failed ? h('button', { type: 'button', onclick: function () { act('POST', 'queue/' + j.id + '/retry'); } }, 'Try again') : null,
+                sure('cancel' + j.id, 'Cancel', function () { act('DELETE', 'queue/' + j.id); })));
+    }
+    function act(method, path) {
+        api(method, path).then(function () { refresh(true); }, function (err) { toast(err.message, true); });
+    }
+
+    function download(t) {
+        s.busy[t.id] = true;
+        drawList();
+        api('GET', 'torrents/' + encodeURIComponent(t.id)).then(function (info) {
+            var videos = info.files.filter(function (f) { return f.video && f.selected; });
+            var ready = videos.filter(function (f) { return !f.job; });
+            var wanted = ready.filter(function (f) { return f.suggested; });
+            if (!ready.length) {
+                toast(videos.length ? 'Those are all on the server already.' : "There's no video in this one.");
+                return null;
+            }
+            if (wanted.length === 1) { return save(t, wanted); }
+            openSheet(t, videos);
+            return null;
+        }).catch(function (err) {
+            toast(err.message, true);
+        }).then(function () {
+            delete s.busy[t.id];
+            refresh(true);
+        });
+    }
+    function save(t, files) {
+        return api('POST', 'torrents/' + encodeURIComponent(t.id) + '/save', {
+            picks: files.map(function (f) { return Object.assign({ file: f.id }, f.guess); }),
+        });
+    }
+
+    function jobWord(job) {
+        if (job.status === 'done') { return 'On server'; }
+        return job.status === 'failed' ? 'Failed' : 'Downloading';
+    }
+    function openSheet(t, videos) {
+        var picked = {}, busy = false, boxes = [];
+        var foot = h('div', { class: 'sheetFoot' });
+        var sheet = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': t.label.name });
+        var free = videos.filter(function (f) { return !f.job; });
+        free.forEach(function (f) { if (f.suggested) { picked[f.id] = f; } });
+        function count() { return Object.keys(picked).length; }
+        function close() { sheet.remove(); document.body.style.overflow = ''; }
+        function drawFoot() {
+            foot.replaceChildren(
+                h('button', { type: 'button', onclick: close }, 'Close'),
+                h('button', { class: 'primary', type: 'button', disabled: busy || !count(), onclick: go }, 'Download ' + count()));
+        }
+        function setAll(on) {
+            picked = {};
+            free.forEach(function (f) { if (on) { picked[f.id] = f; } });
+            boxes.forEach(function (b) { b.checked = on; });
+            drawFoot();
+        }
+        function go() {
+            busy = true;
+            drawFoot();
+            save(t, Object.keys(picked).map(function (id) { return picked[id]; })).then(function () {
+                close();
+                refresh(true);
+            }, function (err) {
+                busy = false;
+                drawFoot();
+                toast(err.message, true);
+            });
+        }
+        var rows = videos.map(function (f) {
+            if (f.job) {
+                return h('div', { class: 'pick off', 'data-file': f.id },
+                    h('div', { class: 'words' }, h('div', { class: 'name' }, f.label.name), h('div', { class: 'desc' }, f.label.description)),
+                    h('span', { class: 'state' }, jobWord(f.job)));
+            }
+            var tick = h('input', { type: 'checkbox', checked: !!picked[f.id], onchange: function () {
+                if (tick.checked) { picked[f.id] = f; } else { delete picked[f.id]; }
+                drawFoot();
+            } });
+            boxes.push(tick);
+            return h('label', { class: 'pick', 'data-file': f.id }, tick,
+                h('div', { class: 'words' }, h('div', { class: 'name' }, f.label.name), h('div', { class: 'desc' }, f.label.description)));
+        });
+        sheet.append(
+            h('div', { class: 'sheetHead' }, h('h2', null, t.label.name),
+                h('button', { type: 'button', onclick: function () { setAll(true); } }, 'All'),
+                h('button', { type: 'button', onclick: function () { setAll(false); } }, 'None')),
+            h('div', { class: 'sheetBody' }, rows),
+            foot);
+        drawFoot();
+        document.body.style.overflow = 'hidden';
+        document.body.append(sheet);
+    }
+
+    function refresh(wantList) {
+        if (s.shut) { return Promise.resolve(); }
+        var jobs = api('GET', 'queue').then(function (queue) {
+            s.queue = queue || [];
+            var done = s.queue.filter(function (j) { return j.status === 'done'; }).length;
+            var changed = done !== doneCount;
+            doneCount = done;
+            return changed;
+        });
+        return jobs.then(function (changed) {
+            drawJobs();
+            if (!changed && !wantList && s.torrents && Date.now() - listAt < LIST_EVERY) { return null; }
+            return api('GET', 'torrents').then(function (rows) {
+                s.torrents = rows || [];
+                listAt = Date.now();
+                var ready = s.torrents.filter(function (t) { return t.status === 'downloaded'; }).length;
+                box.search.placeholder = 'Search ' + ready + ' video' + (ready === 1 ? '' : 's');
+            });
+        }).then(function () {
+            box.error.hidden = true;
+            drawList();
+        }, showError);
+    }
+
+    // One poll at a time, and none while the page is out of sight.
+    function poll() {
+        clearTimeout(timer);
+        if (s.shut || polling || document.hidden) { return; }
+        polling = true;
+        refresh(false).then(function () {
+            polling = false;
+            if (!s.shut) { timer = setTimeout(poll, POLL); }
+        });
+    }
+
+    box.search.addEventListener('input', function () {
+        s.query = box.search.value;
+        s.showing = CHUNK;
+        drawList();
+    });
+    box.more.addEventListener('click', function () {
+        s.showing += CHUNK;
+        drawList();
+    });
+    document.addEventListener('visibilitychange', poll);
+    window.addEventListener('pageshow', poll);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Jellyfin's settings, database and cache, and each service's saved state
+jellyfin/
+realdebrid/state/
+tailscale/state/
+__pycache__/
+*.pyc
+# This machine's own values (tailnet name); local.env.example shows the format
+local.env

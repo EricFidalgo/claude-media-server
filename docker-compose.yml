@@ -1,0 +1,121 @@
+# Jellyfin movie server. Phone link: https://ubuntu.<your-tailnet>.ts.net:8096 (tailnet only, see README.md).
+#
+# GPU transcoding uses plain device and library mounts because nvidia-container-toolkit needs sudo to install.
+# If a driver update ever stops transcoding from starting, installing the toolkit is the proper fix.
+name: media-stack
+
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    user: "1000:1000"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8096:8096"
+    networks:
+      media:
+        ipv4_address: 172.30.96.2 # Fixed, because Jellyfin's Known Proxies list needs fixed addresses.
+    volumes:
+      - ./jellyfin/config:/config
+      - ./jellyfin/cache:/cache
+      - /mnt/hdd/Movies:/media/movies:ro
+      - /mnt/hdd/Shows:/media/shows:ro
+      - /mnt/hdd/Home Movies:/media/home-movies:ro # Your own videos.
+      - /lib/x86_64-linux-gnu/libnvidia-encode.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1:ro
+      - /lib/x86_64-linux-gnu/libnvcuvid.so.1:/usr/lib/x86_64-linux-gnu/libnvcuvid.so.1:ro
+      - /lib/x86_64-linux-gnu/libcuda.so.1:/usr/lib/x86_64-linux-gnu/libcuda.so.1:ro
+      - /lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
+      - /lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1:ro
+    devices:
+      - /dev/nvidiactl
+      - /dev/nvidia0
+      - /dev/nvidia-uvm
+      - /dev/nvidia-uvm-tools
+      - /dev/nvidia-modeset
+
+  # The Real-Debrid app's engine: holds the token and writes into the library, so Jellyfin can stay read-only.
+  # No published port. Only Jellyfin's plugin reaches it, and only for admins. See README.md.
+  realdebrid:
+    image: python:3.12-slim
+    container_name: realdebrid
+    user: "1000:1000"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    working_dir: /app
+    command: python3 -u server.py
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    networks:
+      media:
+        ipv4_address: 172.30.96.4 # Fixed, or it can take Jellyfin's address when both start together.
+    volumes:
+      - ./realdebrid/service:/app:ro
+      - ./realdebrid/state:/state
+      - /mnt/hdd/Movies:/library/movies
+      - /mnt/hdd/Shows:/library/shows
+    secrets:
+      - realdebrid_token
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8097/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Adds and removes captions. Separate from realdebrid so ffmpeg never runs next to the Real-Debrid token.
+  # No published port. Only Jellyfin's plugin reaches it, and only for admins. See README.md.
+  captions:
+    build: ./captions
+    image: media-stack-captions
+    container_name: captions
+    user: "1000:1000"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    working_dir: /app
+    command: python3 -u server.py
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    networks:
+      media:
+        ipv4_address: 172.30.96.5 # Fixed, or it can take Jellyfin's address when both start together.
+    volumes:
+      - ./captions:/app:ro
+      - /mnt/hdd/Movies:/library/movies
+      - /mnt/hdd/Shows:/library/shows
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8098/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # A separate tailnet device called `movies`, so guests can be given this and nothing else.
+  # Sharing the `ubuntu` device instead would also open the Money app and the Docker panel to them.
+  # Off unless asked for: docker compose --profile share up -d movies-share
+  movies-share:
+    image: tailscale/tailscale:stable
+    container_name: movies-share
+    hostname: movies
+    profiles: [share]
+    restart: unless-stopped
+    networks:
+      media:
+        ipv4_address: 172.30.96.3
+    environment:
+      TS_USERSPACE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - ./tailscale/state:/var/lib/tailscale
+      - ./tailscale/serve.json:/config/serve.json:ro
+
+secrets:
+  realdebrid_token:
+    file: ${HOME}/.claude-secrets/env/REALDEBRID_API_TOKEN
+
+networks:
+  media:
+    ipam:
+      config:
+        - subnet: 172.30.96.0/24
+          gateway: 172.30.96.1
